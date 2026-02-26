@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UBI CVE Analyzer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; padding: 30px; max-width: 960px; margin: 0 auto; }
+
+    h1 { color: #4fc3f7; margin-bottom: 6px; font-size: 1.6rem; }
+    p.subtitle { color: #888; font-size: 0.85rem; margin-bottom: 28px; }
+
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2a2d3e;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 18px;
+    }
+    .card h2 { font-size: 0.95rem; color: #90caf9; margin-bottom: 14px; font-weight: 600; }
+
+    .drop-zone {
+      background: #12151e;
+      border: 2px dashed #3a3d50;
+      border-radius: 6px;
+      padding: 24px 18px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #4fc3f7; background: #151a28; }
+    .drop-zone.loaded { border-color: #2d6a4a; border-style: solid; background: #111c17; }
+    .drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-zone .dz-icon { font-size: 2rem; margin-bottom: 8px; }
+    .drop-zone .dz-label { color: #aaa; font-size: 0.88rem; }
+    .drop-zone .dz-label strong { color: #4fc3f7; }
+    .drop-zone.loaded .dz-label { color: #66bb6a; }
+    .drop-zone .dz-sub   { color: #666; font-size: 0.78rem; margin-top: 4px; }
+    .drop-zone.loaded .dz-sub { color: #4caf50; }
+
+    .file-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #1e3a2f; border: 1px solid #2d6a4a;
+      color: #66bb6a; border-radius: 20px;
+      padding: 4px 12px; font-size: 0.8rem; margin: 8px 0 0 0;
+    }
+    .file-badge .rm { cursor: pointer; color: #ef5350; font-weight: bold; font-size: 1rem; line-height: 1; }
+
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+
+    button {
+      padding: 10px 26px; border: none; border-radius: 6px;
+      cursor: pointer; font-size: 0.92rem; font-weight: 600; transition: opacity 0.2s;
+    }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+    #btnAnalyze  { background: #4fc3f7; color: #0f1117; }
+    #btnDownload { background: #66bb6a; color: #0f1117; display: none; }
+    #btnReset    { background: #37394a; color: #aaa; }
+
+    #progress { display: none; margin-top: 18px; }
+    .pb-bg { background: #2a2d3e; border-radius: 4px; height: 8px; overflow: hidden; margin-bottom: 6px; }
+    .pb-fill { height: 100%; background: #4fc3f7; transition: width 0.3s; width: 0%; }
+    #progressText { font-size: 0.8rem; color: #888; }
+
+    #results { display: none; }
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px;
+    }
+    .stat-box {
+      background: #12151e; border: 1px solid #2a2d3e; border-radius: 6px;
+      padding: 12px 16px; text-align: center;
+    }
+    .stat-box .sv  { font-size: 1.6rem; font-weight: 700; }
+    .stat-box .sl  { font-size: 0.72rem; color: #888; margin-top: 2px; }
+    .sv.critical { color: #ef5350; }
+    .sv.high     { color: #ff7043; }
+    .sv.medium   { color: #ffd54f; }
+    .sv.low      { color: #66bb6a; }
+    .sv.kev      { color: #f48fb1; }
+    .sv.total    { color: #4fc3f7; }
+    .sv.overdue  { color: #ef9a9a; }
+
+    table.match-table {
+      width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 8px;
+    }
+    table.match-table th {
+      background: #1f3864; color: #fff; padding: 7px 12px; text-align: left; font-weight: 600;
+    }
+    table.match-table td { padding: 6px 12px; border-bottom: 1px solid #2a2d3e; }
+    table.match-table tr:hover td { background: #1e2130; }
+    .tag { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; font-weight: 600; }
+    .tag.found    { background: #1e3a2f; color: #66bb6a; }
+    .tag.notfound { background: #3a1e1e; color: #ef5350; }
+
+    .section-title { font-size: 0.85rem; color: #90caf9; font-weight: 600; margin: 14px 0 8px; }
+  </style>
+</head>
+<body>
+
+<h1>CVE CVE Analyzer</h1>
+<p class="subtitle">
+  Upload your <strong>RMM.HTML</strong> export from the CVE platform + an optional CVE list —
+  applies the CVE_Vulnerabilities.js field mapping and exports a combined Excel report.
+  No server needed, runs entirely in the browser.
+</p>
+
+<!-- ── Step 1: RMM.HTML ────────────────────────────────────────────────── -->
+<div class="card">
+  <h2>Step 1 — Upload RMM.HTML (CVE vulnerability export)</h2>
+  <div class="drop-zone" id="dzHtml">
+    <input type="file" id="fileHtml" accept=".html,.htm">
+    <div class="dz-icon">📄</div>
+    <div class="dz-label">Drop <strong>RMM.HTML</strong> here or click to browse</div>
+    <div class="dz-sub">The HTML table export from the CVE Vulnerabilities page</div>
+  </div>
+  <div id="htmlBadge"></div>
+</div>
+
+<!-- ── Step 2: Single CVE.txt upload ──────────────────────────────────── -->
+<div class="card">
+  <h2>Step 2 — Upload CVE list (optional .txt file)</h2>
+  <div class="drop-zone" id="dzTxt">
+    <input type="file" id="fileTxt" accept=".txt">
+    <div class="dz-icon">📋</div>
+    <div class="dz-label">Drop <strong>CVE.txt</strong> here or click to browse</div>
+    <div class="dz-sub">Any .txt format — CVE IDs are auto-extracted (CVE-YYYY-NNNNN or CVE YYYY NNNNN)</div>
+  </div>
+  <div id="txtBadge"></div>
+</div>
+
+<!-- ── Controls ──────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="row">
+    <button id="btnAnalyze" disabled>&#9654; Analyze &amp; Export Excel</button>
+    <button id="btnDownload">&#11015; Download Excel</button>
+    <button id="btnReset">&#10005; Reset</button>
+  </div>
+  <div id="progress">
+    <div class="pb-bg"><div class="pb-fill" id="pbFill"></div></div>
+    <div id="progressText">Ready</div>
+  </div>
+</div>
+
+<!-- ── Results ──────────────────────────────────────────────────────── -->
+<div class="card" id="results">
+  <h2>Results</h2>
+  <div class="stats-grid" id="statsGrid"></div>
+  <div class="section-title">CVE List Cross-Reference</div>
+  <table class="match-table">
+    <thead><tr><th>File</th><th>Total CVEs</th><th>Found in HTML</th><th>Not Found</th></tr></thead>
+    <tbody id="matchRows"></tbody>
+  </table>
+</div>
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let htmlContent  = null;
+let htmlFileName = '';
+let txtIds       = [];      // CVE IDs from the single txt file
+let txtFileName  = '';
+let lastWb       = null;
+
+// ── Step 1: RMM.HTML input ────────────────────────────────────────────────
+const fileHtml  = document.getElementById('fileHtml');
+const htmlBadge = document.getElementById('htmlBadge');
+const dzHtml    = document.getElementById('dzHtml');
+
+function setHtmlFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    htmlContent  = e.target.result;
+    htmlFileName = file.name;
+    dzHtml.classList.add('loaded');
+    dzHtml.querySelector('.dz-label').innerHTML = `&#10003; ${file.name}`;
+    dzHtml.querySelector('.dz-sub').textContent = `${(file.size/1024/1024).toFixed(2)} MB loaded`;
+    htmlBadge.innerHTML = `<span class="file-badge">&#10003; ${file.name}<span class="rm" onclick="clearHtml()">&#215;</span></span>`;
+    checkReady();
+  };
+  reader.readAsText(file);
+}
+
+fileHtml.addEventListener('change', () => setHtmlFile(fileHtml.files[0]));
+dzHtml.addEventListener('dragover',  e => { e.preventDefault(); dzHtml.classList.add('drag-over'); });
+dzHtml.addEventListener('dragleave', () => dzHtml.classList.remove('drag-over'));
+dzHtml.addEventListener('drop', e => {
+  e.preventDefault(); dzHtml.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) setHtmlFile(e.dataTransfer.files[0]);
+});
+
+function clearHtml() {
+  htmlContent = null; htmlFileName = '';
+  dzHtml.classList.remove('loaded');
+  dzHtml.querySelector('.dz-label').innerHTML = 'Drop <strong>RMM.HTML</strong> here or click to browse';
+  dzHtml.querySelector('.dz-sub').textContent = 'The HTML table export from the CVE Vulnerabilities page';
+  htmlBadge.innerHTML = '';
+  fileHtml.value = '';
+  checkReady();
+}
+
+// ── Step 2: CVE.txt input ─────────────────────────────────────────────────
+const fileTxt  = document.getElementById('fileTxt');
+const txtBadge = document.getElementById('txtBadge');
+const dzTxt    = document.getElementById('dzTxt');
+
+function parseCVEIds(text) {
+  const seen = new Set(), ids = [];
+  const re = /CVE[-\s](\d{4})[-\s](\d+)/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const id = `CVE-${m[1]}-${m[2]}`;
+    if (!seen.has(id)) { seen.add(id); ids.push(id); }
+  }
+  return ids;
+}
+
+function setTxtFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    txtIds      = parseCVEIds(e.target.result);
+    txtFileName = file.name;
+    dzTxt.classList.add('loaded');
+    dzTxt.querySelector('.dz-label').innerHTML = `&#10003; ${file.name}`;
+    dzTxt.querySelector('.dz-sub').textContent = `${txtIds.length} CVE IDs extracted`;
+    txtBadge.innerHTML = `<span class="file-badge">&#10003; ${file.name} — ${txtIds.length} CVEs<span class="rm" onclick="clearTxt()">&#215;</span></span>`;
+  };
+  reader.readAsText(file);
+}
+
+fileTxt.addEventListener('change', () => setTxtFile(fileTxt.files[0]));
+dzTxt.addEventListener('dragover',  e => { e.preventDefault(); dzTxt.classList.add('drag-over'); });
+dzTxt.addEventListener('dragleave', () => dzTxt.classList.remove('drag-over'));
+dzTxt.addEventListener('drop', e => {
+  e.preventDefault(); dzTxt.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) setTxtFile(e.dataTransfer.files[0]);
+});
+
+function clearTxt() {
+  txtIds = []; txtFileName = '';
+  dzTxt.classList.remove('loaded');
+  dzTxt.querySelector('.dz-label').innerHTML = 'Drop <strong>CVE.txt</strong> here or click to browse';
+  dzTxt.querySelector('.dz-sub').textContent = 'Any .txt format — CVE IDs are auto-extracted (CVE-YYYY-NNNNN or CVE YYYY NNNNN)';
+  txtBadge.innerHTML = '';
+  fileTxt.value = '';
+}
+
+// ── Enable Analyze when HTML is loaded ────────────────────────────────────
+function checkReady() {
+  document.getElementById('btnAnalyze').disabled = !htmlContent;
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────
+document.getElementById('btnReset').addEventListener('click', () => {
+  clearHtml();
+  clearTxt();
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('results').style.display  = 'none';
+  document.getElementById('btnDownload').style.display = 'none';
+  lastWb = null;
+});
+
+// ── Download ──────────────────────────────────────────────────────────────
+document.getElementById('btnDownload').addEventListener('click', () => {
+  if (!lastWb) return;
+  const wbout = XLSX.write(lastWb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  const blob  = new Blob([wbout], { type: 'application/octet-stream' });
+  const url   = URL.createObjectURL(blob);
+  const a     = document.createElement('a');
+  a.href = url; a.download = 'CVE_combined_CVE_report.xlsx'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Main Analyze ──────────────────────────────────────────────────────────
+document.getElementById('btnAnalyze').addEventListener('click', analyze);
+
+function setProgress(pct, text) {
+  document.getElementById('pbFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = text;
+}
+
+async function analyze() {
+  document.getElementById('progress').style.display  = 'block';
+  document.getElementById('results').style.display   = 'none';
+  document.getElementById('btnDownload').style.display = 'none';
+  document.getElementById('btnAnalyze').disabled = true;
+
+  setProgress(5, 'Parsing RMM.HTML …');
+  await tick();
+
+  // ── 1. Parse HTML rows ────────────────────────────────────────────────
+  const rowParts = htmlContent.split('data-table-row-id="CVE-');
+  const htmlCVEs = [];
+  const htmlMap  = new Map();
+
+  for (let i = 1; i < rowParts.length; i++) {
+    const part  = rowParts[i];
+    const cveId = 'CVE-' + part.substring(0, part.indexOf('"'));
+    const titles = extractTdTitles(part);
+
+    const cvss      = titles[1] !== undefined ? parseFloat(titles[1]) : null;
+    const severity  = extractSeverity(part, isNaN(cvss) ? null : cvss);
+    const cisaKev   = titles[2] || 'No';
+    const published = titles[3] || '';
+    const remTitle  = titles[4] || '';
+    const software  = titles[5] || '';
+    const endpoints = titles[6] !== undefined ? parseInt(titles[6], 10) : null;
+
+    const dlMatch  = remTitle.match(/Remediation Deadline:\s*(.+)/);
+    const deadline = dlMatch ? dlMatch[1].trim() : 'N/A';
+    const remStatus = extractRemStatus(part);
+
+    const rec = {
+      cveId, cvss: isNaN(cvss) ? null : cvss, severity,
+      cisaKev, published, deadline, remStatus, software,
+      endpoints: isNaN(endpoints) ? null : endpoints,
+    };
+    htmlCVEs.push(rec);
+    htmlMap.set(cveId, rec);
+
+    if (i % 200 === 0) {
+      setProgress(5 + Math.round((i / rowParts.length) * 40), `Parsing row ${i} of ${rowParts.length - 1} …`);
+      await tick();
+    }
+  }
+
+  setProgress(50, `Parsed ${htmlCVEs.length} CVEs. Building Excel …`);
+  await tick();
+
+  // ── 2. Stats ──────────────────────────────────────────────────────────
+  const sevCount = { Critical: 0, High: 0, Medium: 0, Low: 0, Unknown: 0 };
+  const remCount = { Overdue: 0, 'Due soon': 0, 'Due later': 0, 'Control applied': 0, 'N/A': 0 };
+  let kevCount = 0;
+  const kevList = [];
+  for (const r of htmlCVEs) {
+    sevCount[r.severity] = (sevCount[r.severity] || 0) + 1;
+    if (remCount[r.remStatus] !== undefined) remCount[r.remStatus]++;
+    if ((r.cisaKev || '').toLowerCase() === 'yes') { kevCount++; kevList.push(r); }
+  }
+
+  // ── 3. Build workbook ─────────────────────────────────────────────────
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1 — CVE Vulnerabilities
+  const hdr1 = ['CVE ID','CVSS Score','Severity','CISA KEV','Published Date','Remediation Deadline','Remediation Status','Vulnerable Software','Endpoints'];
+  const col1 = [{wch:18},{wch:11},{wch:10},{wch:10},{wch:16},{wch:22},{wch:18},{wch:50},{wch:10}];
+  const ws1data = [ hdr1.map(h => xCell(h, true, C.headerBg, C.headerFg, 'center')) ];
+  for (const r of htmlCVEs) {
+    const sb = sevBg(r.severity);
+    const rb = remBg(r.remStatus); const rf = remFg(r.remStatus);
+    const isK = (r.cisaKev||'').toLowerCase() === 'yes';
+    ws1data.push([
+      xCell(r.cveId,              true,  C.white,              C.black,              'left'),
+      xCell(r.cvss ?? 'N/A',      false, sb,                   C.black,              'center'),
+      xCell(r.severity,           true,  sb,                   C.black,              'center'),
+      xCell(r.cisaKev,            true,  isK?C.cisaBg:C.white, isK?C.cisaFg:C.black, 'center'),
+      xCell(r.published,          false, C.white,              C.black,              'center'),
+      xCell(r.deadline,           false, rb,                   rf,                   'center'),
+      xCell(r.remStatus,          true,  rb,                   rf,                   'center'),
+      xCell(r.software,           false, C.white,              C.black,              'left'),
+      xCell(r.endpoints ?? 'N/A', false, C.white,              C.black,              'center'),
+    ]);
+  }
+  appendSheet(wb, ws1data, col1, 'CVE Vulnerabilities');
+
+  setProgress(60, 'Building CVE list check sheet …'); await tick();
+
+  // Sheet 2 — CVE Check (single txt file)
+  const hdrC = ['CVE ID','In HTML','CVSS Score','Severity','CISA KEV','Published Date','Remediation Deadline','Remediation Status','Vulnerable Software','Endpoints'];
+  const colC = [{wch:18},{wch:9},{wch:11},{wch:10},{wch:10},{wch:16},{wch:22},{wch:18},{wch:50},{wch:10}];
+  const found    = txtIds.filter(id => htmlMap.has(id)).length;
+  const notFound = txtIds.length - found;
+  const matchStat = { total: txtIds.length, found, notFound };
+
+  const rowsC = [ hdrC.map(h => xCell(h, true, C.headerBg, C.headerFg, 'center')) ];
+  for (const id of txtIds) {
+    const r = htmlMap.get(id);
+    if (r) {
+      const sb = sevBg(r.severity);
+      const rb = remBg(r.remStatus); const rf = remFg(r.remStatus);
+      const isK = (r.cisaKev||'').toLowerCase() === 'yes';
+      rowsC.push([
+        xCell(id,               true,  C.foundBg,            C.foundFg,            'left'),
+        xCell('YES',            true,  C.foundBg,            C.foundFg,            'center'),
+        xCell(r.cvss??'N/A',    false, sb,                   C.black,              'center'),
+        xCell(r.severity,       true,  sb,                   C.black,              'center'),
+        xCell(r.cisaKev,        true,  isK?C.cisaBg:C.white, isK?C.cisaFg:C.black, 'center'),
+        xCell(r.published,      false, C.white,              C.black,              'center'),
+        xCell(r.deadline,       false, rb,                   rf,                   'center'),
+        xCell(r.remStatus,      true,  rb,                   rf,                   'center'),
+        xCell(r.software,       false, C.white,              C.black,              'left'),
+        xCell(r.endpoints??'N/A', false, C.white,            C.black,              'center'),
+      ]);
+    } else {
+      rowsC.push([
+        xCell(id,    false, C.notFoundBg, C.notFoundFg, 'left'),
+        xCell('NO',  true,  C.notFoundBg, C.notFoundFg, 'center'),
+        ...Array(7).fill(xCell('N/A', false, C.notFoundBg, C.notFoundFg, 'center')),
+        xCell('Not found in current report', false, C.notFoundBg, C.notFoundFg, 'left'),
+      ]);
+    }
+  }
+  appendSheet(wb, rowsC, colC, 'CVE Check');
+
+  setProgress(72, 'Building Software → CVE sheet …'); await tick();
+
+  // Sheet 3 — Software → CVE
+  {
+    const hdrSW = ['Vulnerable Software','CVE ID','CVSS Score','Severity','CISA KEV','Published Date','Remediation Deadline','Remediation Status'];
+    const colSW = [{wch:52},{wch:18},{wch:11},{wch:10},{wch:10},{wch:16},{wch:22},{wch:20}];
+    const bySwMap = new Map();
+    for (const r of htmlCVEs) {
+      const sw = r.software || '(unknown)';
+      if (!bySwMap.has(sw)) bySwMap.set(sw, []);
+      bySwMap.get(sw).push(r);
+    }
+    const rowsSW = [hdrSW.map(h => xCell(h, true, C.headerBg, C.headerFg, 'center'))];
+    for (const [sw, cveList] of bySwMap) {
+      for (const r of cveList) {
+        const sb  = sevBg(r.severity);
+        const rb  = remBg(r.remStatus); const rf = remFg(r.remStatus);
+        const isK = (r.cisaKev||'').toLowerCase() === 'yes';
+        rowsSW.push([
+          xCell(sw,           false, 'FFE8F0FE',           C.black,              'left'),
+          xCell(r.cveId,      true,  C.foundBg,            C.foundFg,            'left'),
+          xCell(r.cvss??'N/A',false, sb,                   C.black,              'center'),
+          xCell(r.severity,   true,  sb,                   C.black,              'center'),
+          xCell(r.cisaKev,    true,  isK?C.cisaBg:C.white, isK?C.cisaFg:C.black, 'center'),
+          xCell(r.published,  false, C.white,              C.black,              'center'),
+          xCell(r.deadline,   false, rb,                   rf,                   'center'),
+          xCell(r.remStatus,  true,  rb,                   rf,                   'center'),
+        ]);
+      }
+    }
+    const wsSW = XLSX.utils.aoa_to_sheet(rowsSW);
+    wsSW['!cols'] = colSW;
+    wsSW['!rows'] = rowsSW.map((_,i) => i===0 ? {hpt:24} : {hpt:18});
+    XLSX.utils.book_append_sheet(wb, wsSW, 'Software → CVE');
+  }
+
+  setProgress(88, 'Building Summary sheet …'); await tick();
+
+  // Sheet 4 — Summary
+  const ws4 = buildSummarySheet(htmlCVEs, kevList, kevCount, sevCount, remCount, matchStat);
+  const sh4 = XLSX.utils.aoa_to_sheet(ws4);
+  sh4['!cols'] = [{wch:40},{wch:20},{wch:46}];
+  sh4['!rows'] = ws4.map(() => ({ hpt: 20 }));
+  XLSX.utils.book_append_sheet(wb, sh4, 'Summary');
+
+  lastWb = wb;
+
+  setProgress(100, `Done — ${htmlCVEs.length} CVEs analysed`);
+  renderStats(htmlCVEs.length, sevCount, kevCount, remCount, matchStat);
+  document.getElementById('results').style.display  = 'block';
+  document.getElementById('btnDownload').style.display = 'inline-block';
+  document.getElementById('btnAnalyze').disabled = false;
+}
+
+// ── HTML parsing helpers ──────────────────────────────────────────────────
+
+function extractTdTitles(chunk) {
+  const titles = []; let pos = 0;
+  while (titles.length < 10) {
+    const tIdx = chunk.indexOf('<td', pos);
+    if (tIdx === -1) break;
+    const tEnd = chunk.indexOf('>', tIdx);
+    if (tEnd === -1) break;
+    const tag = chunk.substring(tIdx, tEnd);
+    const tm  = tag.match(/title="([^"]*)"/);
+    if (tm) titles.push(tm[1]);
+    pos = tEnd + 1;
+  }
+  return titles;
+}
+
+function extractSeverity(chunk, cvss) {
+  const m = chunk.match(/_badge_(danger|warning|primary|default|success)_/);
+  if (m) {
+    if (m[1] === 'danger')  return 'Critical';
+    if (m[1] === 'warning') return 'High';
+    if (m[1] === 'primary') return 'Medium';
+    return 'Low';
+  }
+  if (cvss !== null) {
+    if (cvss >= 9.0) return 'Critical';
+    if (cvss >= 7.0) return 'High';
+    if (cvss >= 4.0) return 'Medium';
+    return 'Low';
+  }
+  return 'Unknown';
+}
+
+function extractRemStatus(chunk) {
+  const m = chunk.match(/style="line-height: 20px;" title="Remediation Deadline:[^"]*">([^<]+)<\/span>/);
+  return m ? m[1].trim() : 'N/A';
+}
+
+// ── Excel helpers ─────────────────────────────────────────────────────────
+
+const C = {
+  headerBg: 'FF1F3864', headerFg: 'FFFFFFFF',
+  criticalBg: 'FFFF0000', highBg: 'FFFF6600', mediumBg: 'FFFFFF00', lowBg: 'FF00B050',
+  cisaBg: 'FFFF0000', cisaFg: 'FFFFFFFF',
+  overdueBg: 'FFFFCCCC', overdueFg: 'FF8B0000',
+  dueSoonBg: 'FFFFD700',
+  dueLaterBg: 'FFCCFFCC', dueLaterFg: 'FF006400',
+  foundBg: 'FFE2EFDA', foundFg: 'FF006400',
+  notFoundBg: 'FFF2F2F2', notFoundFg: 'FFCC0000',
+  white: 'FFFFFFFF', black: 'FF000000',
+};
+
+function xCell(v, bold, bgColor, fgColor, hAlign) {
+  return {
+    v, t: typeof v === 'number' ? 'n' : 's',
+    s: {
+      font:      { bold: !!bold, color: { rgb: fgColor || C.black }, name: 'Calibri', sz: 10 },
+      fill:      bgColor ? { fgColor: { rgb: bgColor }, patternType: 'solid' } : undefined,
+      alignment: { horizontal: hAlign || 'left', vertical: 'center', wrapText: true },
+      border: {
+        top:    { style: 'thin', color: { rgb: 'FFD9D9D9' } },
+        bottom: { style: 'thin', color: { rgb: 'FFD9D9D9' } },
+        left:   { style: 'thin', color: { rgb: 'FFD9D9D9' } },
+        right:  { style: 'thin', color: { rgb: 'FFD9D9D9' } },
+      }
+    }
+  };
+}
+
+function sevBg(s) {
+  return s==='Critical'?C.criticalBg : s==='High'?C.highBg : s==='Medium'?C.mediumBg : s==='Low'?C.lowBg : C.white;
+}
+function remBg(s) {
+  return s==='Overdue'?C.overdueBg : s==='Due soon'?C.dueSoonBg : s==='Due later'?C.dueLaterBg : C.white;
+}
+function remFg(s) {
+  return s==='Overdue'?C.overdueFg : s==='Due later'?C.dueLaterFg : C.black;
+}
+
+function appendSheet(wb, rows, cols, name) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = cols;
+  ws['!rows'] = rows.map((_,i) => i===0 ? {hpt:24} : {hpt:18});
+  XLSX.utils.book_append_sheet(wb, ws, name);
+}
+
+function buildSummarySheet(htmlCVEs, kevList, kevCount, sevCount, remCount, matchStat) {
+  const s = xCell, w = C.white, hb = C.headerBg, hf = C.headerFg, bk = C.black;
+  const rows = [];
+  rows.push([s('CVE CVE Combined Report — Summary', true, hb, hf, 'left'), s('',false,hb), s('',false,hb)]);
+  rows.push([s('Report Date', false, w, bk), s(new Date().toLocaleDateString('en-GB'), false, w, bk, 'center'), s('',false,w)]);
+  rows.push([s('Total CVEs in RMM.HTML', true, w, bk), s(htmlCVEs.length, true, w, bk, 'center'), s('',false,w)]);
+  rows.push([s(''),s(''),s('')]);
+  rows.push([s('Severity Breakdown', true, hb, hf), s('Count', true, hb, hf, 'center'), s('',false,hb)]);
+  for (const [sev, bg] of [['Critical',C.criticalBg],['High',C.highBg],['Medium',C.mediumBg],['Low',C.lowBg]]) {
+    rows.push([s(sev,true,bg,bk), s(sevCount[sev]||0,false,bg,bk,'center'), s('',false,w)]);
+  }
+  rows.push([s(''),s(''),s('')]);
+  rows.push([s('Remediation Status', true, hb, hf), s('Count', true, hb, hf, 'center'), s('',false,hb)]);
+  rows.push([s('Overdue',         true,  C.overdueBg,  C.overdueFg),  s(remCount['Overdue']||0,         false, C.overdueBg,  C.overdueFg,  'center'), s('',false,w)]);
+  rows.push([s('Due soon',        true,  C.dueSoonBg,  bk),           s(remCount['Due soon']||0,         false, C.dueSoonBg,  bk,           'center'), s('',false,w)]);
+  rows.push([s('Due later',       true,  C.dueLaterBg, C.dueLaterFg), s(remCount['Due later']||0,        false, C.dueLaterBg, C.dueLaterFg, 'center'), s('',false,w)]);
+  rows.push([s('Control applied', false, w,            bk),           s(remCount['Control applied']||0,  false, w,            bk,           'center'), s('',false,w)]);
+  rows.push([s('N/A',             false, w,            bk),           s(remCount['N/A']||0,              false, w,            bk,           'center'), s('',false,w)]);
+  rows.push([s(''),s(''),s('')]);
+  rows.push([s(`CISA KEV — Actively Exploited (${kevCount})`, true, C.cisaBg, C.cisaFg), s('',false,C.cisaBg), s('',false,C.cisaBg)]);
+  for (const r of kevList) {
+    rows.push([s(r.cveId,true,C.cisaBg,C.cisaFg), s(`CVSS ${r.cvss} – ${r.severity} – ${r.remStatus}`,false,C.cisaBg,C.cisaFg), s(r.software,false,C.cisaBg,C.cisaFg)]);
+  }
+  if (matchStat.total > 0) {
+    rows.push([s(''),s(''),s('')]);
+    rows.push([s('CVE List Cross-Reference', true, hb, hf), s('Found in RMM.HTML', true, hb, hf, 'center'), s('Not Found', true, hb, hf, 'center')]);
+    const nfBg = matchStat.notFound > 0 ? C.notFoundBg : w;
+    const nfFg = matchStat.notFound > 0 ? C.notFoundFg : bk;
+    rows.push([
+      s(`CVE.txt (${matchStat.total} CVEs)`, false, w, bk),
+      s(matchStat.found,    true, C.foundBg, C.foundFg, 'center'),
+      s(matchStat.notFound, true, nfBg,      nfFg,      'center'),
+    ]);
+  }
+  return rows;
+}
+
+// ── Results UI ────────────────────────────────────────────────────────────
+
+function renderStats(total, sevCount, kevCount, remCount, matchStat) {
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-box"><div class="sv total">${total}</div><div class="sl">Total CVEs</div></div>
+    <div class="stat-box"><div class="sv critical">${sevCount.Critical||0}</div><div class="sl">Critical</div></div>
+    <div class="stat-box"><div class="sv high">${sevCount.High||0}</div><div class="sl">High</div></div>
+    <div class="stat-box"><div class="sv medium">${sevCount.Medium||0}</div><div class="sl">Medium</div></div>
+    <div class="stat-box"><div class="sv low">${sevCount.Low||0}</div><div class="sl">Low</div></div>
+    <div class="stat-box"><div class="sv kev">${kevCount}</div><div class="sl">CISA KEV</div></div>
+    <div class="stat-box"><div class="sv overdue">${remCount.Overdue||0}</div><div class="sl">Overdue</div></div>
+  `;
+  const tbody = document.getElementById('matchRows');
+  if (!matchStat.total) {
+    tbody.innerHTML = `<tr><td colspan="4" style="color:#555;padding:10px 12px;">No CVE list uploaded</td></tr>`;
+  } else {
+    tbody.innerHTML = `<tr>
+      <td>CVE.txt</td>
+      <td style="color:#888">${matchStat.total}</td>
+      <td><span class="tag found">${matchStat.found}</span></td>
+      <td><span class="tag ${matchStat.notFound?'notfound':'found'}">${matchStat.notFound}</span></td>
+    </tr>`;
+  }
+}
+
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+</script>
+</body>
+</html>
